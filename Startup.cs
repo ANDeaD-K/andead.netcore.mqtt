@@ -1,58 +1,73 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.WebSockets;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Text;
+using andead.netcore.mqtt.Managers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using MQTTnet;
+using MQTTnet.Client;
+using MQTTnet.Client.Options;
+using MQTTnet.Extensions.ManagedClient;
+using Newtonsoft.Json;
 
 namespace andead.netcore.mqtt
 {
     public class Startup
     {
+        private const string MQTT_SERVER_KEY_NAME = "mqtt-server";
+        private const string MQTT_TOPIC_KEY_NAME = "mqtt-topic";
+
+        private readonly ILogger _logger;
+        private readonly IConfiguration _configuration;
+
+        public Startup(ILogger<Startup> logger, IConfiguration configuration)
+        {
+            _logger = logger;
+            _configuration = configuration;
+        }
+
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddMvc();
         }
 
-        private async Task Echo(HttpContext context, WebSocket webSocket)
+        public async void Configure(IApplicationBuilder app, IHostingEnvironment env)
         {
-            var buffer = new byte[1024 * 4];
-            WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-            while (!result.CloseStatus.HasValue)
-            {
-                await webSocket.SendAsync(new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, CancellationToken.None);
+            app.UseMvcWithDefaultRoute();
 
-                result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+            string mqttServer = _configuration.GetValue<string>(MQTT_SERVER_KEY_NAME, String.Empty);
+            string mqttTopic = _configuration.GetValue<string>(MQTT_TOPIC_KEY_NAME, String.Empty);
+
+            if (String.IsNullOrEmpty(mqttServer) || String.IsNullOrEmpty(mqttTopic))
+            {
+                _logger.LogCritical(JsonConvert.SerializeObject(
+                    new
+                    {
+                        error = "MQTT Server or MQTT Topic are not set!"
+                    }
+                ));
+
+                return;
             }
-            await webSocket.CloseAsync(result.CloseStatus.Value, result.CloseStatusDescription, CancellationToken.None);
-        }
 
-        public void Configure(IApplicationBuilder app, IHostingEnvironment env)
-        {
-            app.UseWebSockets();
+            var options = new ManagedMqttClientOptionsBuilder()
+                .WithAutoReconnectDelay(TimeSpan.FromSeconds(5))
+                .WithClientOptions(new MqttClientOptionsBuilder()
+                    .WithWebSocketServer(mqttServer)
+                    .WithTls().Build())
+                .Build();
 
-            app.Use(async (context, next) =>
-            {
-                // if (context.Request.Path == "/ws")
-                // {
-                    if (context.WebSockets.IsWebSocketRequest)
-                    {
-                        WebSocket webSocket = await context.WebSockets.AcceptWebSocketAsync();
-                        await Echo(context, webSocket);
-                    }
-                    else
-                    {
-                        context.Response.StatusCode = 400;
-                    }
-                // }
-                // else
-                // {
-                //     await next();
-                // }
+            var mqttClient = new MqttFactory().CreateManagedMqttClient();
+            await mqttClient.SubscribeAsync(new TopicFilterBuilder().WithTopic(mqttTopic).Build());
+
+            MqttManager mqttManager = new MqttManager(_logger);
+            mqttClient.UseApplicationMessageReceivedHandler((e) => {
+                mqttManager.MessageReceived(e);
             });
+
+            await mqttClient.StartAsync(options);
         }
     }
 }
