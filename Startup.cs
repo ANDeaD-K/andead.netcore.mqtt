@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text;
 using andead.netcore.mqtt.Managers;
+using andead.netcore.mqtt.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -53,13 +55,16 @@ namespace andead.netcore.mqtt
 
             IManagedMqttClient mqttClient = new MqttFactory().CreateManagedMqttClient();
 
-            MqttManager mqttManager = new MqttManager(_logger);
+            List<Message> logMessages = new List<Message>();
+            MqttManager mqttManager = new MqttManager(_logger, logMessages);
             mqttClient.UseApplicationMessageReceivedHandler((e) => {
                 mqttManager.MessageReceived(e);
             });
 
             await mqttClient.StartAsync(options);
+
             services.AddSingleton(mqttClient);
+            services.AddSingleton(logMessages);
         }
 
         public void Configure(IApplicationBuilder app, IHostingEnvironment env)
