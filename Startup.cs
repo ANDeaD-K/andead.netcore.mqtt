@@ -28,28 +28,20 @@ namespace andead.netcore.mqtt
             _configuration = configuration;
         }
 
-        public void ConfigureServices(IServiceCollection services)
+        public async void ConfigureServices(IServiceCollection services)
         {
             services.AddMvc();
-        }
-
-        public async void Configure(IApplicationBuilder app, IHostingEnvironment env)
-        {
-            app.UseMvcWithDefaultRoute();
 
             string mqttServer = _configuration.GetValue<string>(MQTT_SERVER_KEY_NAME, String.Empty);
-            string mqttTopic = _configuration.GetValue<string>(MQTT_TOPIC_KEY_NAME, String.Empty);
 
-            if (String.IsNullOrEmpty(mqttServer) || String.IsNullOrEmpty(mqttTopic))
+            if (String.IsNullOrEmpty(mqttServer))
             {
                 _logger.LogCritical(JsonConvert.SerializeObject(
                     new
                     {
-                        error = "MQTT Server or MQTT Topic are not set!"
+                        error = "MQTT Server is not set!"
                     }
                 ));
-
-                return;
             }
 
             var options = new ManagedMqttClientOptionsBuilder()
@@ -59,8 +51,7 @@ namespace andead.netcore.mqtt
                     .WithTls().Build())
                 .Build();
 
-            var mqttClient = new MqttFactory().CreateManagedMqttClient();
-            await mqttClient.SubscribeAsync(new TopicFilterBuilder().WithTopic(mqttTopic).Build());
+            IManagedMqttClient mqttClient = new MqttFactory().CreateManagedMqttClient();
 
             MqttManager mqttManager = new MqttManager(_logger);
             mqttClient.UseApplicationMessageReceivedHandler((e) => {
@@ -68,6 +59,12 @@ namespace andead.netcore.mqtt
             });
 
             await mqttClient.StartAsync(options);
+            services.AddSingleton(mqttClient);
+        }
+
+        public void Configure(IApplicationBuilder app, IHostingEnvironment env)
+        {
+            app.UseMvcWithDefaultRoute();
         }
     }
 }
